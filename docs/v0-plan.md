@@ -159,8 +159,8 @@ separate manifest key and is read only for scoring.
 |---|---|
 | Measured dynamic range | 28 dB |
 | Correlation of power with log-distance | < −0.85 |
-| Hotspot error vs truth | **~4.5 m** |
-| Field peak error | ~8.7 m |
+| Hotspot error vs truth | **~5.6 m** |
+| Field peak error | ~8.9 m |
 | Stated uncertainty radius | 3.5 m (1σ-equivalent) |
 
 **The control case matters as much.** For the distant carrier, the pipeline must

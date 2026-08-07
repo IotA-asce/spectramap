@@ -27,6 +27,7 @@ docs/v0-plan.md matters.
 from __future__ import annotations
 
 import math
+import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -36,6 +37,18 @@ from spectramap.geospatial.projection import LocalTangentPlane, haversine_m, pat
 # Distances below this are clamped, because log-distance path loss diverges at zero
 # and a receiver cannot occupy the same point as an antenna anyway.
 MIN_DISTANCE_M = 0.5
+
+
+def stable_hash(text: str) -> int:
+    """A hash of a string that is identical in every process and every Python build.
+
+    Python's built-in ``hash()`` is randomised per process by PYTHONHASHSEED, so
+    seeding a generator with it makes a "deterministic" simulation reproducible only
+    within a single run. Two invocations of the same script would silently produce
+    different noise -- which is exactly the kind of quiet irreproducibility this
+    project exists to avoid.
+    """
+    return zlib.crc32(text.encode("utf-8"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,7 +365,7 @@ class VirtualWorld:
             int(np.floor(float(east) / tx.shadowing_scale_m)),
             int(np.floor(float(north) / tx.shadowing_scale_m)),
         )
-        rng = np.random.default_rng([self.seed, abs(hash(tx.tx_id)) % (2**31), *map(abs, cell)])
+        rng = np.random.default_rng([self.seed, stable_hash(tx.tx_id), *map(abs, cell)])
         return float(rng.normal(0.0, tx.shadowing_db))
 
     # -- Reproducibility ----------------------------------------------------
@@ -363,8 +376,11 @@ class VirtualWorld:
         Seeding per block rather than threading one generator through the run means
         block *N* contains the same noise no matter how many blocks were read before
         it, so a test can read any part of the simulated survey in isolation.
+
+        The stream name goes through :func:`stable_hash`, not the built-in ``hash()``,
+        so the result is identical across processes.
         """
-        return np.random.default_rng([self.seed, abs(hash(stream)) % (2**31), index])
+        return np.random.default_rng([self.seed, stable_hash(stream), index])
 
     def to_dict(self) -> dict[str, object]:
         """Ground truth, written into the survey manifest for simulated runs only."""
@@ -456,6 +472,7 @@ def compact_world(seed: int = 20260807) -> VirtualWorld:
 
 __all__ = [
     "MIN_DISTANCE_M",
+    "stable_hash",
     "VirtualRoute",
     "VirtualTransmitter",
     "VirtualWorld",

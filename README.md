@@ -1,6 +1,26 @@
+<div align="center">
+
 # SpectraMap
 
 **Map the radio-frequency environment across physical space.**
+
+[![CI](https://github.com/IotA-asce/spectramap/actions/workflows/ci.yml/badge.svg)](https://github.com/IotA-asce/spectramap/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12%20|%203.13-blue.svg)](pyproject.toml)
+[![Tests](https://img.shields.io/badge/tests-227%20passing-brightgreen.svg)](tests/)
+[![Hardware](https://img.shields.io/badge/CI-no%20RF%20hardware%20required-informational.svg)](#try-it-in-sixty-seconds)
+
+<img src="docs/images/heatmap.png" alt="An RF heatmap reconstructed from a simulated survey. Brightness is received power at 433.92 MHz; the pale dots are individual measurements along the walked route; the white circle is the estimated strongest-signal region with its uncertainty radius; the red cross is the true transmitter, which the mapping code was never given." width="520">
+
+<em>A survey walked around a 433.92 MHz beacon. Dots are real measurements; colour
+between them is interpolated; dark gaps are ground no measurement came within 14 m of.
+The white circle is the estimated strongest-signal region and its uncertainty; the
+red ✕ is where the transmitter actually was — <strong>the mapping code was never
+told</strong>.</em>
+
+</div>
+
+---
 
 A traditional spectrum analyser answers *what frequencies exist here*. SpectraMap
 answers a bigger question:
@@ -17,32 +37,30 @@ The central object is not `Spectrum(frequency)` but:
 RF(latitude, longitude, altitude, frequency, time)
 ```
 
-SpectraMap is a **passive measurement instrument**. It receives, measures and maps.
-It does not transmit, decode payloads, defeat access controls, or interfere with
-communications. See [docs/safety-and-legal.md](docs/safety-and-legal.md).
+SpectraMap is a **passive measurement instrument**. It receives, measures and maps. It
+does not transmit, decode payloads, defeat access controls, or interfere with
+communications — see [safety-and-legal.md](docs/safety-and-legal.md).
 
 ---
 
 ## Status
 
-**V0, simulated vertical slice — working end to end, no radio hardware required.**
-
-The complete pipeline runs today against a deterministic simulator:
+**V0 — the simulated vertical slice works end to end. No radio hardware required.**
 
 ```
-virtual transmitter -> MockSDR -> synthetic IQ -> DSP -> spectrum observation
-     -> MockGPS route -> geotagged observations -> persistent survey
-     -> spatial aggregation -> interpolation -> RF heatmap
+virtual transmitter → MockSDR → synthetic IQ → DSP → spectrum observation
+   → MockGPS route → geotagged observations → persistent survey
+   → spatial aggregation → interpolation → RF heatmap
 ```
 
-CI reconstructs a synthetic transmitter's region from a simulated walk **without
-telling the mapping code where the transmitter is**, and asserts that the
-reconstruction lands near the truth. Physical RTL-SDR integration is the next
-milestone; the driver is written and the abstraction is in place, but it has not yet
-been validated against real hardware.
+Every push, CI reconstructs a synthetic transmitter's region from a simulated walk
+**without telling the mapping code where the transmitter is**, and asserts the answer
+lands within metres of the truth. It also asserts that a spatially flat control signal
+is *refused* rather than localised.
 
-See [docs/v0-plan.md](docs/v0-plan.md) for the milestone breakdown and what is and
-is not yet proven.
+Physical RTL-SDR integration is the next milestone. The driver is written and the
+abstraction is in place, but it has **not yet been validated against real hardware**.
+See [v0-plan.md](docs/v0-plan.md) for milestone status and what remains unproven.
 
 ---
 
@@ -53,29 +71,66 @@ No SDR, no GPS, no network.
 ```bash
 pip install -e '.[dev]'
 
-spectramap devices                       # the simulator shows up as a device
+spectramap devices                       # the simulator appears as a device
 spectramap survey --driver mock \
     --frequency 433.92MHz --gain 24 \
     --duration 80 --name backyard-test \
     --output surveys/backyard-test.smap
 spectramap analyze surveys/backyard-test.smap --frequency 433.92MHz
-spectramap serve surveys/backyard-test.smap
+spectramap serve  surveys/backyard-test.smap
 ```
 
-80 seconds covers the simulated route once. It records ~147 observations spanning
-28 dB, and the analysis recovers the beacon's region to within a few metres — without
-the mapping code ever being given its position.
-
 `analyze` prints a summary, writes a heatmap, and reports the probable
-strongest-signal region. `serve` opens a local map with the route, the individual
-measurement points, an RF intensity layer with a frequency selector, and a spectrum
-viewer for any point you click.
+strongest-signal region — with the caveats that belong to it:
+
+```
+Analysis: backyard-test
+  Observations used     147
+  Unit                  dBFS/Hz (relative, uncalibrated)
+  Measured range        -91.6 to -63.6 dB (span 28.0 dB)
+
+Spatial reconstruction
+  Algorithm             inverse distance weighting
+  Coverage              100% of the raster is within 40 m of a measurement
+                        the rest is masked, not drawn: nothing was measured there
+
+Strongest-signal region  [ESTIMATED]
+  Probable strongest-signal region near 0.00013, -24.99987
+    (estimated radius 4 m, confidence: good)
+  Geometry score        0.66
+  - Estimated from received signal strength only. Multipath, obstructions and
+    antenna orientation can move the apparent strongest region by tens of metres.
+  - This marks where the signal was strongest, not where a transmitter is.
+```
+
+`serve` opens a local map with the route, the individual measurement points, an RF
+intensity layer with a frequency selector, and a spectrum viewer for any point you
+click.
 
 Or run the whole slice as one script:
 
 ```bash
-python examples/simulated_survey.py
+python examples/simulated_survey.py            # ~1.4 s for an 80-second survey
+python examples/simulated_survey.py --scenario full
 ```
+
+---
+
+## Move the frequency selector, and the landscape changes
+
+<div align="center">
+
+<img src="docs/images/frequency-selector.png" alt="Two panels from the same survey. At 433.92 MHz a strong spatial gradient converges on the beacon. At 433.95 MHz the field is essentially uniform, because that transmitter is kilometres away." width="820">
+
+<em>The same survey, two frequencies. <strong>Left, 433.92 MHz:</strong> a clear
+gradient converging on the beacon. <strong>Right, 433.95 MHz:</strong> a distant
+carrier — plainly detectable, but with no usable spatial structure. Both panels share
+the same 23 dB colour range, so a colour step means the same number of decibels in
+each. Autoscaling the right panel to its own 0.4 dB variation would have rendered noise
+as a confident-looking gradient; SpectraMap instead grades that signal
+<code>confidence: low</code> and states it is not usable as a location.</em>
+
+</div>
 
 ---
 
@@ -91,38 +146,42 @@ Every observation keeps the context needed to interpret it years later:
 | **How** | receiver, antenna, centre frequency, sample rate, gain, AGC state |
 | **How well** | quality flags: `SDR_OVERLOAD`, `GPS_LOW_ACCURACY`, `DROPPED_SAMPLES`, `GAIN_CHANGED`, `AGC_ACTIVE`, … |
 
-Poor measurements are **flagged, never deleted**. Filtering is an analysis decision,
-and the analyst gets to make it.
+Poor measurements are **flagged, never deleted**. Filtering is an analysis decision, and
+the analyst gets to make it.
 
 ---
 
 ## Design commitments
 
-These are the rules the code is written to keep, not aspirations.
+These are rules the code keeps and the tests enforce — not aspirations.
 
 **Measurement and interpolation are different things.** Every value carries an
-`Evidence` tag — `MEASURED`, `DERIVED`, `INTERPOLATED`, `ESTIMATED`, `ASSUMED`. The
-heatmap is masked wherever the nearest real measurement is too far away, so the map
-has holes exactly where the survey had holes. Interpolation confidence drives opacity.
-You can always reveal the measurement points underneath.
+`Evidence` tag: `MEASURED`, `DERIVED`, `INTERPOLATED`, `ESTIMATED`, `ASSUMED`. The
+heatmap is masked wherever the nearest real measurement is too far away, so the map has
+holes exactly where the survey had holes. Interpolation confidence drives opacity. You
+can always reveal the measurement points underneath.
 
-**Uncalibrated numbers are labelled uncalibrated.** V0 produces relative
-`dBFS`/`dBFS/Hz` referenced to receiver full scale, never bare `dBm`. Calibration is
-a first-class concept with a place in the architecture — and V0 has not done it.
-See [docs/calibration.md](docs/calibration.md).
+**Uncalibrated numbers are labelled uncalibrated.** V0 produces relative `dBFS`/`dBFS/Hz`
+referenced to receiver full scale, never bare `dBm`. A test asserts that no output of an
+uncalibrated survey contains the string `dBm`. Calibration is a first-class concept with
+a place in the architecture — and V0 has not done it.
+See [calibration.md](docs/calibration.md).
 
-**No false precision.** The strongest-signal estimator returns a region and a radius
-with a confidence grade and explicit caveats, plus a geometry score that tells you
-when your survey shape could not constrain the answer. It never returns a
-transmitter's coordinates.
+**No false precision.** The strongest-signal estimator returns a *region* with a radius,
+a confidence grade and explicit caveats — never a transmitter's coordinates. The radius
+is floored by the survey's own position accuracy, because nothing can be located more
+precisely than the receiver was. A geometry score tells you when your survey shape could
+not constrain the answer.
 
-**Fixed gain by default.** Under AGC the receiver quietly rescales itself as you
-walk, and spatial power comparison stops meaning anything. SpectraMap defaults to
-fixed gain, warns loudly if you don't, and flags every affected observation.
+**Fixed gain by default.** Under AGC the receiver quietly rescales itself as you walk,
+and spatial power comparison stops meaning anything. SpectraMap defaults to fixed gain,
+warns loudly if you don't, and flags every affected observation.
 
-**Hardware is replaceable and CI needs none of it.** Everything above
-`spectramap.sdr` talks to one `SDRDevice` interface. The full test suite runs with
-no radio attached.
+**Averaging happens in the linear power domain.** Averaging decibels computes a geometric
+mean and under-reports exactly the bursty signals a user is hunting.
+
+**Hardware is replaceable and CI needs none of it.** Everything above `spectramap.sdr`
+talks to one `SDRDevice` interface. The full test suite runs with no radio attached.
 
 ---
 
@@ -131,32 +190,33 @@ no radio attached.
 A modular local application. No microservices, no cloud, no server database.
 
 ```
-                Frontend  (map, spectrum, surveys)
+                Frontend  (map · spectrum explorer · surveys)
                     |
                Analysis API
        ------------------------------
        |            |               |
-   Geospatial      DSP        Localisation
+   Geospatial      DSP        Hotspot est.
        ------------------------------
                     |
-               Survey Store   (.smap)
+               Survey Store  (.smap)
                     ^
              Acquisition Engine
                  /       \
-               SDR       GPS
+             SDRDevice   PositionProvider
 ```
 
-Python throughout: numpy for DSP, SQLite plus flat `float32` arrays for storage, and
-a dependency-free browser front end. Core install is two dependencies (`numpy`,
-`PyYAML`); drivers and exporters are extras.
-See [docs/adr/0001-implementation-language.md](docs/adr/0001-implementation-language.md).
+Python throughout: numpy for DSP, SQLite plus flat `float32` arrays for storage, and a
+dependency-free browser front end. **Core install is two dependencies** (`numpy`,
+`PyYAML`); drivers and exporters are extras, so CI and the entire simulated pipeline run
+without a native stack.
+See [ADR 0001](docs/adr/0001-implementation-language.md).
 
 ---
 
 ## The survey format
 
 A survey is a self-contained, portable directory. Another developer can read the
-measurements without running SpectraMap:
+measurements without running SpectraMap — and CI checks that claim on every push:
 
 ```
 backyard-test.smap/
@@ -170,12 +230,15 @@ backyard-test.smap/
 ```
 
 ```python
-import numpy as np
-spectra = np.memmap("spectra/chunk_000000.f32", dtype="<f4", mode="r").reshape(-1, 4096)
-# frequency of bin k = f_start_hz + k * f_step_hz, both in manifest.json
+import json, numpy as np
+manifest = json.load(open("backyard-test.smap/manifest.json"))
+chunk = manifest["spectra"]["chunks"][0]
+spectra = np.memmap("backyard-test.smap/" + chunk["path"],
+                    dtype="<f4", mode="r").reshape(-1, chunk["n_bins"])
+freqs = chunk["f_start_hz"] + np.arange(chunk["n_bins"]) * chunk["f_step_hz"]
 ```
 
-Full schema: [docs/survey-format.md](docs/survey-format.md).
+Full schema: [survey-format.md](docs/survey-format.md).
 
 ---
 
@@ -192,7 +255,7 @@ Full schema: [docs/survey-format.md](docs/survey-format.md).
 | [calibration.md](docs/calibration.md) | Why V0 is uncalibrated and how to change that |
 | [technical-risks.md](docs/technical-risks.md) | Everything that can make a measurement wrong |
 | [safety-and-legal.md](docs/safety-and-legal.md) | Scope, ethics, and your responsibilities |
-| [adr/](docs/adr/) | Architecture decision records |
+| [adr/](docs/adr/) | Six architecture decision records |
 
 ---
 
@@ -200,7 +263,7 @@ Full schema: [docs/survey-format.md](docs/survey-format.md).
 
 | | |
 |---|---|
-| **V0** | Spatial spectrum mapper — SDR + GPS → measurements → heatmap |
+| **V0** | **Spatial spectrum mapper** — SDR + GPS → measurements → heatmap |
 | V1 | Wideband sequential sweeps |
 | V2 | Temporal analysis and survey differencing ("RF time machine") |
 | V3 | Probabilistic source-region localisation |
@@ -211,33 +274,27 @@ Full schema: [docs/survey-format.md](docs/survey-format.md).
 | V8 | Optional signal-pattern classification |
 
 Explicitly **not** in V0: drone integration, 3D mapping, advanced localisation,
-multi-receiver synchronisation, direction finding, any form of decoding or
-interception, jamming, transmitter impersonation, AI classification, cloud services.
+multi-receiver synchronisation, direction finding, any form of decoding or interception,
+jamming, transmitter impersonation, AI classification, cloud services.
 
 ---
 
 ## Contributing
 
-Contributions are welcome. The engineering priorities, in order:
-
-1. measurement integrity
-2. reproducibility
-3. correct DSP
-4. raw-data preservation
-5. transparent uncertainty
-6. hardware abstraction
-7. testability
-8. performance
-9. visualisation
-10. advanced features
-
-Never prioritise a beautiful heatmap over correct measurements.
+Contributions are welcome — most valuable right now is **physical hardware validation**.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-pytest              # full suite, no hardware needed
+pytest              # 227 tests, no hardware needed
 ruff check .
 ```
 
+The engineering priorities, in order: measurement integrity, reproducibility, correct
+DSP, raw-data preservation, transparent uncertainty, hardware abstraction, testability,
+performance, visualisation, advanced features.
+
+> Never prioritise a beautiful heatmap over correct measurements.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

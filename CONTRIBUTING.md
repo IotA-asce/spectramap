@@ -10,7 +10,7 @@ git clone <repo> && cd spectramap
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 
-pytest          # full suite, no radio hardware needed
+pytest          # 227 tests, no radio hardware needed
 ruff check .
 python examples/simulated_survey.py
 ```

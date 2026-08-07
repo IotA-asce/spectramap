@@ -6,6 +6,10 @@ These tests check it against closed-form expectations rather than against itself
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -21,6 +25,7 @@ from spectramap.simulation.world import (
     VirtualWorld,
     Waypoint,
     compact_world,
+    stable_hash,
 )
 from spectramap.types import FFTConfig, Normalization
 
@@ -73,6 +78,39 @@ def test_blocks_are_independently_reproducible():
     for _ in range(3):
         b.read_iq(4096)
     assert np.array_equal(fourth, b.read_iq(4096).samples)
+
+
+def test_determinism_survives_a_different_process_hash_seed():
+    """The simulator must be reproducible ACROSS processes, not just within one.
+
+    Python randomises `hash()` of strings per process via PYTHONHASHSEED. Seeding a
+    generator with it makes a "deterministic" simulation reproducible only inside a
+    single run -- two invocations of the same script silently produce different noise.
+    The in-process determinism tests above cannot catch that, because they share one
+    interpreter, so this one spawns real subprocesses.
+    """
+    script = (
+        "from spectramap.simulation.world import compact_world;"
+        "w = compact_world();"
+        "print(repr(w.rng_for('iq', 3).normal(0, 1, 4).tolist()));"
+        "print(repr(w.received_power_dbfs(w.transmitters[0], 7.5)))"
+    )
+    outputs = set()
+    for hash_seed in ("0", "1", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": hash_seed}
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, env=env, check=True
+        )
+        outputs.add(result.stdout)
+    assert len(outputs) == 1, f"simulation differs across PYTHONHASHSEED values: {outputs}"
+
+
+def test_stable_hash_is_pinned_to_known_values():
+    """Pinned so the value never drifts: a change would invalidate every stored survey
+    whose noise a test or a figure depends on."""
+    assert stable_hash("iq") == 3538191291
+    assert stable_hash("gps") == 1424645575
+    assert stable_hash("") == 0
 
 
 def test_different_seeds_differ():
