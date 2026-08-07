@@ -1,0 +1,659 @@
+<!doctype html>
+<!--
+  SpectraMap viewer.
+
+  Self-contained on purpose: no framework, no bundler, no CDN. The map is drawn on a
+  canvas in Web Mercator, with OpenStreetMap tiles fetched directly when the machine
+  happens to be online and silently skipped when it is not. A survey done in a field
+  should still be viewable in that field.
+
+  The rule this UI is built around: the user must always be able to tell measurement
+  from interpolation. The heatmap is drawn with its confidence bound to opacity and
+  is masked where nothing was measured; the measurement points can always be shown
+  on top; and every panel states its units and whether they are calibrated.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpectraMap</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --panel-2: #1c232c; --line: #2b323c;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --warn: #d29922;
+    --bad: #f85149; --good: #3fb950;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); display: grid;
+    grid-template-columns: 340px 1fr; font: 13px/1.5 system-ui, -apple-system, sans-serif;
+  }
+  @media (max-width: 820px) { body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } }
+
+  aside { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
+  main { position: relative; overflow: hidden; }
+  canvas#map { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas#map.dragging { cursor: grabbing; }
+
+  header { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 15px; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+  section { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  section h2 {
+    margin: 0 0 8px; font-size: 10px; text-transform: uppercase;
+    letter-spacing: .09em; color: var(--muted); font-weight: 600;
+  }
+  label { display: block; font-size: 11px; color: var(--muted); margin: 8px 0 3px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=text], input[type=number], select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit;
+  }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; min-width: 0; }
+  .kv { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; font-size: 12px; }
+  .kv span:first-child { color: var(--muted); }
+  .kv span:last-child { font-family: var(--mono); text-align: right; }
+  .freq { font-family: var(--mono); font-size: 17px; color: var(--accent); }
+
+  .toggle { display: flex; align-items: center; gap: 7px; margin: 5px 0; font-size: 12px; color: var(--text); }
+  .toggle input { accent-color: var(--accent); }
+
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px;
+    font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .b-measured { background: #1f6feb33; color: #79c0ff; }
+  .b-interp   { background: #d2992233; color: #e3b341; }
+  .b-est      { background: #f8514933; color: #ff7b72; }
+  .b-uncal    { background: #8b949e33; color: var(--muted); }
+
+  .note { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .warn { font-size: 11px; color: var(--warn); margin-top: 6px; }
+  .bad  { font-size: 11px; color: var(--bad); }
+
+  #legend {
+    position: absolute; left: 14px; bottom: 14px; background: #0e1116ee;
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font-size: 11px;
+  }
+  #legend .bar { width: 168px; height: 9px; border-radius: 3px; margin: 5px 0 3px; }
+  #legend .ends { display: flex; justify-content: space-between; font-family: var(--mono); color: var(--muted); }
+
+  #scale {
+    position: absolute; right: 14px; bottom: 14px; background: #0e1116ee;
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+  }
+  #status {
+    position: absolute; top: 14px; right: 14px; background: #0e1116ee;
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+    font-size: 11px; color: var(--muted); max-width: 320px;
+  }
+  #spectrum { width: 100%; height: 150px; display: block; background: var(--panel-2);
+              border: 1px solid var(--line); border-radius: 6px; }
+  .empty { color: var(--muted); font-size: 11px; font-style: italic; }
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 9px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <h1 id="survey-name">SpectraMap</h1>
+    <div class="sub" id="survey-sub">loading…</div>
+  </header>
+
+  <section>
+    <h2>Frequency selector</h2>
+    <div class="freq" id="freq-label">—</div>
+    <input type="range" id="freq-slider" min="0" max="1000" value="500">
+    <div class="row">
+      <div>
+        <label for="freq-input">Centre (MHz)</label>
+        <input type="text" id="freq-input" inputmode="decimal">
+      </div>
+      <div>
+        <label for="bw-input">Width (kHz)</label>
+        <input type="number" id="bw-input" value="20" min="0.1" step="1">
+      </div>
+    </div>
+    <label for="method">Band aggregation</label>
+    <select id="method">
+      <option value="peak">peak — strongest bin in the band</option>
+      <option value="mean">mean — average power across the band</option>
+      <option value="integrated">integrated — total power in the band</option>
+    </select>
+    <div class="note" id="span-note"></div>
+  </section>
+
+  <section>
+    <h2>Measured <span class="badge b-measured">measured</span></h2>
+    <div class="kv"><span>Observations used</span><span id="m-count">—</span></div>
+    <div class="kv"><span>Range</span><span id="m-range">—</span></div>
+    <div class="kv"><span>Min / max</span><span id="m-minmax">—</span></div>
+    <div class="kv"><span>Units</span><span id="m-unit">—</span></div>
+    <div id="m-uncal"></div>
+    <div class="note" id="m-excluded"></div>
+  </section>
+
+  <section>
+    <h2>Interpolation <span class="badge b-interp">interpolated</span></h2>
+    <div class="kv"><span>Algorithm</span><span>IDW</span></div>
+    <div class="kv"><span>Resolution</span><span id="f-res">—</span></div>
+    <div class="kv"><span>Coverage</span><span id="f-cov">—</span></div>
+    <label for="maxdist">Mask beyond (m from a measurement)</label>
+    <input type="range" id="maxdist" min="5" max="120" step="5" value="40">
+    <div class="note">
+      Cells further than this from any measurement are not drawn. The map has holes
+      exactly where the survey had holes.
+    </div>
+    <label class="toggle"><input type="checkbox" id="opt-confidence" checked> Opacity shows confidence</label>
+    <label class="toggle"><input type="checkbox" id="opt-heatmap" checked> Show heatmap</label>
+    <label class="toggle"><input type="checkbox" id="opt-points" checked> Show measurement points</label>
+    <label class="toggle"><input type="checkbox" id="opt-track" checked> Show GPS track</label>
+    <label class="toggle"><input type="checkbox" id="opt-tiles" checked> Base map (needs internet)</label>
+  </section>
+
+  <section>
+    <h2>Strongest region <span class="badge b-est">estimated</span></h2>
+    <div id="hotspot-body" class="empty">—</div>
+  </section>
+
+  <section>
+    <h2>Spectrum explorer</h2>
+    <div id="spectrum-meta" class="empty">Click a measurement point on the map.</div>
+    <canvas id="spectrum" width="600" height="300"></canvas>
+    <div class="note" id="spectrum-note"></div>
+  </section>
+
+  <section>
+    <h2>Survey warnings</h2>
+    <div id="warnings" class="empty">none</div>
+  </section>
+</aside>
+
+<main>
+  <canvas id="map"></canvas>
+  <div id="status">loading…</div>
+  <div id="legend">
+    <div><strong id="legend-title">RF power</strong> <span class="badge b-uncal" id="legend-cal">uncalibrated</span></div>
+    <div class="bar" id="legend-bar"></div>
+    <div class="ends"><span id="legend-lo">—</span><span id="legend-hi">—</span></div>
+  </div>
+  <div id="scale">—</div>
+</main>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Web Mercator. The interpolated field is produced on a local tangent plane and
+// placed here by its lat/lon bounds; over a survey-sized area (hundreds of metres)
+// the difference between the two projections is far below GPS accuracy.
+// ---------------------------------------------------------------------------
+const R = 6378137;
+const mercX = lon => R * lon * Math.PI / 180;
+const mercY = lat => R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI / 180) / 2));
+const mercLon = x => (x / R) * 180 / Math.PI;
+const mercLat = y => (2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * 180 / Math.PI;
+
+const VIRIDIS = [[68,1,84],[72,36,117],[65,68,135],[53,95,141],[42,120,142],
+                 [33,145,140],[34,168,132],[68,191,112],[122,209,81],[189,223,38],[253,231,37]];
+function viridis(t) {
+  t = Math.max(0, Math.min(1, t));
+  const i = Math.min(VIRIDIS.length - 2, Math.floor(t * (VIRIDIS.length - 1)));
+  const f = t * (VIRIDIS.length - 1) - i, a = VIRIDIS[i], b = VIRIDIS[i + 1];
+  return [Math.round(a[0]+(b[0]-a[0])*f), Math.round(a[1]+(b[1]-a[1])*f), Math.round(a[2]+(b[2]-a[2])*f)];
+}
+
+const $ = id => document.getElementById(id);
+const fmtHz = hz => hz >= 1e9 ? (hz/1e9).toFixed(6)+' GHz' : hz >= 1e6 ? (hz/1e6).toFixed(5)+' MHz' : (hz/1e3).toFixed(3)+' kHz';
+
+const state = {
+  survey: null, band: null, field: null, hotspot: null, track: [],
+  centerHz: 0, widthHz: 20000, method: 'peak', maxDistance: 40,
+  view: { x: 0, y: 0, scale: 1 },      // world metres -> pixels
+  heatImg: null, heatBounds: null, heatToken: 0,
+  selected: null, spectrum: null, tiles: new Map(), hoverId: null,
+};
+
+const canvas = $('map'), ctx = canvas.getContext('2d');
+const spectrumCanvas = $('spectrum'), sctx = spectrumCanvas.getContext('2d');
+
+function toScreen(lat, lon) {
+  return { x: (mercX(lon) - state.view.x) * state.view.scale + canvas.width / 2,
+           y: (state.view.y - mercY(lat)) * state.view.scale + canvas.height / 2 };
+}
+function toLatLon(px, py) {
+  return { lat: mercLat(state.view.y - (py - canvas.height / 2) / state.view.scale),
+           lon: mercLon(state.view.x + (px - canvas.width / 2) / state.view.scale) };
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  draw();
+}
+window.addEventListener('resize', resize);
+
+// ---------------------------------------------------------------------------
+// Optional OpenStreetMap tiles. Absence of internet is a normal condition, not an
+// error: a failed tile is simply never drawn.
+// ---------------------------------------------------------------------------
+function tileZoom() {
+  // Mercator metres per pixel -> the standard 256 px tile zoom level.
+  const mpp = 1 / state.view.scale;
+  return Math.max(1, Math.min(19, Math.round(Math.log2(2 * Math.PI * R / 256 / mpp))));
+}
+function drawTiles() {
+  if (!$('opt-tiles').checked) return;
+  const z = tileZoom(), n = 2 ** z, world = 2 * Math.PI * R, tileMetres = world / n;
+  const tl = toLatLon(0, 0), br = toLatLon(canvas.width, canvas.height);
+  const x0 = Math.floor((mercX(tl.lon) + world / 2) / tileMetres);
+  const x1 = Math.ceil((mercX(br.lon) + world / 2) / tileMetres);
+  const y0 = Math.floor((world / 2 - mercY(tl.lat)) / tileMetres);
+  const y1 = Math.ceil((world / 2 - mercY(br.lat)) / tileMetres);
+  ctx.globalAlpha = 0.55;
+  for (let x = x0; x < x1; x++) for (let y = y0; y < y1; y++) {
+    if (x < 0 || y < 0 || x >= n || y >= n) continue;
+    const key = `${z}/${x}/${y}`;
+    let img = state.tiles.get(key);
+    if (img === undefined) {
+      img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => draw();
+      img.onerror = () => state.tiles.set(key, null);   // Offline: give up quietly.
+      img.src = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+      state.tiles.set(key, img);
+    }
+    if (!img || !img.complete || !img.naturalWidth) continue;
+    const wx = x * tileMetres - world / 2, wy = world / 2 - y * tileMetres;
+    const p = { x: (wx - state.view.x) * state.view.scale + canvas.width / 2,
+                y: (state.view.y - wy) * state.view.scale + canvas.height / 2 };
+    const size = tileMetres * state.view.scale;
+    ctx.drawImage(img, p.x, p.y, size + 1, size + 1);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Drawing
+// ---------------------------------------------------------------------------
+function draw() {
+  ctx.fillStyle = '#0b0e13';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawTiles();
+
+  if (state.heatImg && state.heatBounds && $('opt-heatmap').checked) {
+    const b = state.heatBounds;
+    const tl = toScreen(b.north, b.west), br = toScreen(b.south, b.east);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(state.heatImg, tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+  }
+
+  if (state.track.length > 1 && $('opt-track').checked) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+    ctx.lineWidth = 1.5 * (window.devicePixelRatio || 1);
+    ctx.beginPath();
+    state.track.forEach(([lat, lon], i) => {
+      const p = toScreen(lat, lon);
+      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    });
+    ctx.stroke();
+  }
+
+  if (state.band && $('opt-points').checked) {
+    const b = state.band, lo = b.min_db, hi = b.max_db, span = (hi - lo) || 1;
+    const r = 2.6 * (window.devicePixelRatio || 1);
+    for (let i = 0; i < b.n; i++) {
+      const p = toScreen(b.latitude[i], b.longitude[i]);
+      if (p.x < -20 || p.y < -20 || p.x > canvas.width + 20 || p.y > canvas.height + 20) continue;
+      const c = viridis((b.power_db[i] - lo) / span);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, b.observation_id[i] === state.selected ? r * 2.4 : r, 0, 6.2832);
+      ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+      ctx.fill();
+      ctx.strokeStyle = b.observation_id[i] === state.selected ? '#fff' : 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = (b.observation_id[i] === state.selected ? 2 : 1) * (window.devicePixelRatio || 1);
+      ctx.stroke();
+    }
+  }
+
+  if (state.hotspot && state.hotspot.latitude !== undefined) {
+    const h = state.hotspot, p = toScreen(h.latitude, h.longitude);
+    // Radius drawn to scale, because the radius is the point: an estimate without
+    // its uncertainty is a claim the data does not support.
+    const mPerPx = 1 / (state.view.scale * Math.cos(h.latitude * Math.PI / 180));
+    const rpx = Math.max(6, h.radius_m / mPerPx);
+    const colour = h.confidence === 'good' ? '#3fb950' : h.confidence === 'moderate' ? '#d29922' : '#f85149';
+    ctx.beginPath(); ctx.arc(p.x, p.y, rpx, 0, 6.2832);
+    ctx.fillStyle = colour + '22'; ctx.fill();
+    ctx.setLineDash([6, 5]); ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.6 * (window.devicePixelRatio || 1); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(p.x - 7, p.y); ctx.lineTo(p.x + 7, p.y);
+    ctx.moveTo(p.x, p.y - 7); ctx.lineTo(p.x, p.y + 7); ctx.stroke();
+  }
+
+  // Simulated surveys only: the true transmitter, shown for comparison. It is never
+  // an input to the estimate above.
+  const truth = state.survey && state.survey.simulation_ground_truth;
+  if (truth) for (const tx of truth.transmitters || []) {
+    if (Math.abs(tx.frequency_hz - state.centerHz) > Math.max(state.widthHz, 50000)) continue;
+    const p = toScreen(tx.latitude, tx.longitude);
+    ctx.strokeStyle = '#ff7b72'; ctx.lineWidth = 2 * (window.devicePixelRatio || 1);
+    ctx.beginPath(); ctx.moveTo(p.x - 8, p.y - 8); ctx.lineTo(p.x + 8, p.y + 8);
+    ctx.moveTo(p.x + 8, p.y - 8); ctx.lineTo(p.x - 8, p.y + 8); ctx.stroke();
+    ctx.fillStyle = '#ff7b72'; ctx.font = `${11 * (window.devicePixelRatio || 1)}px sans-serif`;
+    ctx.fillText('true tx (simulated)', p.x + 12, p.y + 4);
+  }
+
+  drawScaleBar();
+}
+
+function drawScaleBar() {
+  const mPerPx = 1 / state.view.scale;
+  const target = 120 * mPerPx;
+  const nice = [1,2,5,10,20,50,100,200,500,1000,2000,5000].find(v => v >= target) || 10000;
+  $('scale').textContent = `${nice >= 1000 ? (nice/1000)+' km' : nice+' m'}  ·  ${mPerPx.toFixed(2)} m/px`;
+}
+
+// ---------------------------------------------------------------------------
+// Interaction
+// ---------------------------------------------------------------------------
+let dragging = false, last = null;
+canvas.addEventListener('mousedown', e => { dragging = true; last = e; canvas.classList.add('dragging'); });
+window.addEventListener('mouseup', () => { dragging = false; canvas.classList.remove('dragging'); });
+window.addEventListener('mousemove', e => {
+  if (!dragging || !last) return;
+  const dpr = window.devicePixelRatio || 1;
+  state.view.x -= (e.clientX - last.clientX) * dpr / state.view.scale;
+  state.view.y += (e.clientY - last.clientY) * dpr / state.view.scale;
+  last = e; draw();
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const dpr = window.devicePixelRatio || 1;
+  const before = toLatLon(e.offsetX * dpr, e.offsetY * dpr);
+  state.view.scale *= Math.exp(-e.deltaY * 0.0016);
+  const after = toLatLon(e.offsetX * dpr, e.offsetY * dpr);
+  state.view.x += mercX(before.lon) - mercX(after.lon);
+  state.view.y += mercY(before.lat) - mercY(after.lat);
+  draw();
+}, { passive: false });
+
+canvas.addEventListener('click', e => {
+  if (!state.band) return;
+  const dpr = window.devicePixelRatio || 1;
+  const px = e.offsetX * dpr, py = e.offsetY * dpr;
+  let best = null, bestD = 18 * dpr;
+  for (let i = 0; i < state.band.n; i++) {
+    const p = toScreen(state.band.latitude[i], state.band.longitude[i]);
+    const d = Math.hypot(p.x - px, p.y - py);
+    if (d < bestD) { bestD = d; best = state.band.observation_id[i]; }
+  }
+  if (best !== null) selectObservation(best);
+});
+
+function fitBounds(b, pad = 0.15) {
+  const w = mercX(b.east) - mercX(b.west), h = mercY(b.north) - mercY(b.south);
+  state.view.x = (mercX(b.east) + mercX(b.west)) / 2;
+  state.view.y = (mercY(b.north) + mercY(b.south)) / 2;
+  state.view.scale = Math.min(canvas.width / (w * (1 + pad) || 1),
+                              canvas.height / (h * (1 + pad) || 1));
+  if (!isFinite(state.view.scale) || state.view.scale <= 0) state.view.scale = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Spectrum explorer
+// ---------------------------------------------------------------------------
+async function selectObservation(id) {
+  state.selected = id;
+  draw();
+  const s = await fetch(`/api/spectrum/${id}`).then(r => r.json());
+  state.spectrum = s;
+  const flags = s.flags.length ? s.flags.join(', ') : 'none';
+  const when = new Date(Number(s.t_utc_ns) / 1e6).toISOString().replace('T', ' ').slice(0, 19);
+  $('spectrum-meta').className = '';
+  $('spectrum-meta').innerHTML =
+    `<div class="kv"><span>Observation</span><span>#${s.observation_id}</span></div>` +
+    `<div class="kv"><span>Location</span><span>${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)}</span></div>` +
+    `<div class="kv"><span>Time (UTC)</span><span>${when}</span></div>` +
+    `<div class="kv"><span>Position</span><span>±${(s.position_accuracy_m ?? 0).toFixed(1)} m · ${s.position_evidence}</span></div>` +
+    `<div class="kv"><span>Tuned / rate</span><span>${fmtHz(s.center_frequency_hz)} · ${(s.sample_rate_hz/1e6).toFixed(3)} MS/s</span></div>` +
+    `<div class="kv"><span>Gain</span><span>${s.agc ? 'AGC' : (s.gain_db ?? '—') + ' dB'}</span></div>` +
+    `<div class="kv"><span>FFTs averaged</span><span>${s.n_ffts}</span></div>` +
+    `<div class="kv"><span>Flags</span><span>${flags}</span></div>`;
+  $('spectrum-note').textContent =
+    `${s.unit_label} · resolution bandwidth ${s.enbw_hz.toFixed(0)} Hz (${s.bin_width_hz.toFixed(0)} Hz bins)`;
+  drawSpectrum();
+}
+
+function drawSpectrum() {
+  const s = state.spectrum;
+  const dpr = window.devicePixelRatio || 1;
+  spectrumCanvas.width = spectrumCanvas.clientWidth * dpr;
+  spectrumCanvas.height = 150 * dpr;
+  const W = spectrumCanvas.width, H = spectrumCanvas.height;
+  sctx.fillStyle = '#1c232c'; sctx.fillRect(0, 0, W, H);
+  if (!s) return;
+
+  // Show a window around the selected band rather than the whole span, so the
+  // selector and the plot agree about what is being looked at.
+  const half = Math.max(state.widthHz * 6, 60000);
+  const lo = state.centerHz - half, hi = state.centerHz + half;
+  const idx = [];
+  for (let i = 0; i < s.frequencies_hz.length; i++)
+    if (s.frequencies_hz[i] >= lo && s.frequencies_hz[i] <= hi) idx.push(i);
+  if (idx.length < 2) return;
+
+  let vmin = Infinity, vmax = -Infinity;
+  for (const i of idx) { vmin = Math.min(vmin, s.power_db[i]); vmax = Math.max(vmax, s.power_db[i]); }
+  const pad = (vmax - vmin) * 0.12 + 1; vmin -= pad; vmax += pad;
+  const px = f => (f - lo) / (hi - lo) * (W - 34 * dpr) + 30 * dpr;
+  const py = v => H - 18 * dpr - (v - vmin) / (vmax - vmin) * (H - 28 * dpr);
+
+  sctx.strokeStyle = '#2b323c'; sctx.lineWidth = dpr;
+  sctx.font = `${9 * dpr}px ui-monospace, monospace`; sctx.fillStyle = '#8b949e';
+  for (let k = 0; k <= 3; k++) {
+    const v = vmin + (vmax - vmin) * k / 3, y = py(v);
+    sctx.beginPath(); sctx.moveTo(30 * dpr, y); sctx.lineTo(W - 4 * dpr, y); sctx.stroke();
+    sctx.fillText(v.toFixed(0), 2 * dpr, y + 3 * dpr);
+  }
+
+  // The selected band, shaded.
+  sctx.fillStyle = '#58a6ff22';
+  sctx.fillRect(px(state.centerHz - state.widthHz / 2), 4 * dpr,
+                Math.max(2, px(state.centerHz + state.widthHz / 2) - px(state.centerHz - state.widthHz / 2)),
+                H - 22 * dpr);
+
+  sctx.beginPath();
+  idx.forEach((i, k) => {
+    const x = px(s.frequencies_hz[i]), y = py(s.power_db[i]);
+    k ? sctx.lineTo(x, y) : sctx.moveTo(x, y);
+  });
+  sctx.strokeStyle = '#58a6ff'; sctx.lineWidth = 1.3 * dpr; sctx.stroke();
+
+  sctx.fillStyle = '#8b949e';
+  sctx.fillText((lo / 1e6).toFixed(3), 30 * dpr, H - 5 * dpr);
+  const t = `${(hi / 1e6).toFixed(3)} MHz`;
+  sctx.fillText(t, W - sctx.measureText(t).width - 4 * dpr, H - 5 * dpr);
+}
+
+// ---------------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------------
+function bandQuery() {
+  return `center=${state.centerHz}&width=${state.widthHz}&method=${state.method}` +
+         `&max_distance=${state.maxDistance}`;
+}
+
+async function refresh() {
+  $('status').textContent = 'computing…';
+  const q = bandQuery();
+  try {
+    const [band, field, hotspot] = await Promise.all([
+      fetch(`/api/band?${q}`).then(r => r.json()),
+      fetch(`/api/field?${q}`).then(r => r.json()),
+      fetch(`/api/hotspot?${q}`).then(r => r.json()),
+    ]);
+    if (band.error || field.error) {
+      $('status').innerHTML = `<span class="bad">${band.error || field.error}</span>`;
+      state.band = null; state.field = null; state.heatImg = null; state.hotspot = null;
+      draw(); return;
+    }
+    state.band = band; state.field = field;
+    state.hotspot = hotspot && hotspot.latitude !== undefined ? hotspot : null;
+    renderPanels();
+    loadHeatmap(q);
+    draw();
+    $('status').textContent =
+      `${band.n.toLocaleString()} measurements · ${(field.coverage_fraction * 100).toFixed(0)}% of raster covered`;
+  } catch (err) {
+    $('status').innerHTML = `<span class="bad">${err}</span>`;
+  }
+}
+
+function loadHeatmap(q) {
+  const token = ++state.heatToken;
+  const conf = $('opt-confidence').checked ? 1 : 0;
+  const img = new Image();
+  img.onload = () => {
+    if (token !== state.heatToken) return;   // A newer request already won.
+    state.heatImg = img;
+    state.heatBounds = state.field.bounds;
+    draw();
+  };
+  img.src = `/api/field.png?${q}&confidence=${conf}`;
+}
+
+function renderPanels() {
+  const b = state.band, f = state.field;
+  $('m-count').textContent = b.n.toLocaleString();
+  $('m-range').textContent = b.range_db === null ? '—' : `${b.range_db.toFixed(1)} dB`;
+  $('m-minmax').textContent = b.min_db === null ? '—'
+    : `${b.min_db.toFixed(1)} / ${b.max_db.toFixed(1)}`;
+  $('m-unit').textContent = b.unit;
+  $('m-uncal').innerHTML = b.calibrated ? ''
+    : `<div class="note">Relative to receiver full scale at the recorded gain.
+       Comparable within this survey only — <strong>not dBm</strong>.</div>`;
+  $('m-excluded').textContent = f.excluded
+    ? `${f.excluded} observation(s) excluded by the quality filter (kept in the survey).` : '';
+
+  $('f-res').textContent = `${f.resolution_m.toFixed(1)} m`;
+  $('f-cov').textContent = `${(f.coverage_fraction * 100).toFixed(0)}%`;
+
+  $('legend-lo').textContent = f.vmin === null ? '—' : f.vmin.toFixed(1);
+  $('legend-hi').textContent = f.vmax === null ? '—' : f.vmax.toFixed(1);
+  $('legend-title').textContent = `RF power (${b.unit})`;
+  $('legend-cal').textContent = b.calibrated ? 'calibrated' : 'uncalibrated';
+
+  const h = state.hotspot;
+  if (!h) {
+    $('hotspot-body').className = 'empty';
+    $('hotspot-body').textContent = 'not enough positioned measurements';
+  } else {
+    const colour = h.confidence === 'good' ? 'var(--good)'
+                 : h.confidence === 'moderate' ? 'var(--warn)' : 'var(--bad)';
+    $('hotspot-body').className = '';
+    $('hotspot-body').innerHTML =
+      `<div class="kv"><span>Centre</span><span>${h.latitude.toFixed(5)}, ${h.longitude.toFixed(5)}</span></div>` +
+      `<div class="kv"><span>Radius</span><span>${h.radius_m.toFixed(0)} m</span></div>` +
+      `<div class="kv"><span>Confidence</span><span style="color:${colour}">${h.confidence}</span></div>` +
+      `<div class="kv"><span>Geometry score</span><span>${h.geometry_score.toFixed(2)}</span></div>` +
+      h.caveats.map(c => `<div class="warn">${c}</div>`).join('');
+  }
+}
+
+(function legendBar() {
+  const stops = [];
+  for (let i = 0; i <= 10; i++) {
+    const c = viridis(i / 10);
+    stops.push(`rgb(${c[0]},${c[1]},${c[2]}) ${i * 10}%`);
+  }
+  $('legend-bar').style.background = `linear-gradient(90deg, ${stops.join(',')})`;
+})();
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+let debounce = null;
+function scheduleRefresh(delay = 220) {
+  clearTimeout(debounce);
+  debounce = setTimeout(refresh, delay);
+}
+
+function setCentre(hz, fromSlider) {
+  const [lo, hi] = state.survey.spans_hz[0];
+  state.centerHz = Math.min(hi, Math.max(lo, hz));
+  $('freq-label').textContent = fmtHz(state.centerHz);
+  $('freq-input').value = (state.centerHz / 1e6).toFixed(5);
+  if (!fromSlider) $('freq-slider').value = String(Math.round((state.centerHz - lo) / (hi - lo) * 1000));
+  drawSpectrum();
+}
+
+$('freq-slider').addEventListener('input', e => {
+  const [lo, hi] = state.survey.spans_hz[0];
+  setCentre(lo + (hi - lo) * (+e.target.value / 1000), true);
+  scheduleRefresh();
+});
+$('freq-input').addEventListener('change', e => {
+  const v = parseFloat(e.target.value);
+  if (isFinite(v)) { setCentre(v * 1e6, false); scheduleRefresh(0); }
+});
+$('bw-input').addEventListener('change', e => {
+  const v = parseFloat(e.target.value);
+  if (isFinite(v) && v > 0) { state.widthHz = v * 1e3; drawSpectrum(); scheduleRefresh(0); }
+});
+$('method').addEventListener('change', e => { state.method = e.target.value; scheduleRefresh(0); });
+$('maxdist').addEventListener('input', e => { state.maxDistance = +e.target.value; scheduleRefresh(); });
+for (const id of ['opt-heatmap', 'opt-points', 'opt-track', 'opt-tiles'])
+  $(id).addEventListener('change', draw);
+$('opt-confidence').addEventListener('change', () => loadHeatmap(bandQuery()));
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+(async function init() {
+  const survey = await fetch('/api/survey').then(r => r.json());
+  state.survey = survey;
+  const s = survey.summary;
+
+  $('survey-name').textContent = s.name;
+  $('survey-sub').textContent =
+    `${s.observations.toLocaleString()} observations · ${(s.distance_m / 1000).toFixed(2)} km · ` +
+    `${Math.round(s.duration_s / 60)} min`;
+
+  if (survey.warnings && survey.warnings.length) {
+    $('warnings').className = '';
+    $('warnings').innerHTML = survey.warnings.map(w => `<div class="warn">${w}</div>`).join('');
+  }
+
+  if (!survey.spans_hz.length || !survey.has_positions) {
+    $('status').innerHTML = '<span class="bad">this survey has no positioned spectra to map</span>';
+    return;
+  }
+  const [lo, hi] = survey.spans_hz[0];
+  $('span-note').innerHTML =
+    `Measured span ${fmtHz(lo)} – ${fmtHz(hi)}.` +
+    (survey.sequential_capture
+      ? ' <strong>Sweep mode:</strong> different parts of this span were measured at different times and places — this is not a simultaneous wideband capture.'
+      : '');
+
+  resize();
+  fitBounds(survey.bounds);
+  state.track = (await fetch('/api/track').then(r => r.json())).track;
+
+  // Start at the strongest bin the survey saw: usually the thing worth looking at.
+  setCentre(s.peak_frequency_hz || (lo + hi) / 2, false);
+  await refresh();
+})();
+</script>
+</body>
+</html>

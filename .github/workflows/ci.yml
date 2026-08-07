@@ -1,0 +1,73 @@
+name: CI
+
+# Ordinary CI requires no RF hardware. The entire pipeline -- acquisition, DSP,
+# geotagging, storage, interpolation, mapping -- runs against the deterministic
+# simulator, including the reconstruction check that recovers a synthetic
+# transmitter's region without being told where it is.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && pip install -e '.[dev]'
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q --cov=spectramap --cov-report=term-missing
+
+      - name: Vertical slice (no hardware)
+        run: python examples/simulated_survey.py
+
+      - name: CLI workflow
+        run: |
+          spectramap devices
+          spectramap gps --provider mock
+          spectramap survey --driver mock -f 433.92MHz -g 24 \
+            --sample-rate 250kHz --offset-tuning 50kHz --fft-size 512 \
+            -d 80 -o /tmp/ci.smap
+          spectramap status /tmp/ci.smap
+          spectramap analyze /tmp/ci.smap -f 433.92MHz
+
+      - name: Survey is readable without SpectraMap
+        # The open-format promise, checked rather than asserted in prose.
+        run: |
+          python - <<'PY'
+          import json, numpy as np, pathlib
+          survey = pathlib.Path("/tmp/ci.smap")
+          manifest = json.loads((survey / "manifest.json").read_text())
+          assert manifest["format"] == "spectramap-survey"
+          assert manifest["units"]["calibrated"] is False
+          chunk = manifest["spectra"]["chunks"][0]
+          data = np.memmap(survey / chunk["path"], dtype="<f4", mode="r")
+          spectra = data.reshape(-1, chunk["n_bins"])
+          freqs = chunk["f_start_hz"] + np.arange(chunk["n_bins"]) * chunk["f_step_hz"]
+          print(f"{spectra.shape[0]} spectra x {spectra.shape[1]} bins, "
+                f"{freqs[0]/1e6:.4f}-{freqs[-1]/1e6:.4f} MHz")
+          assert spectra.shape[0] > 10 and np.isfinite(spectra).all()
+          PY

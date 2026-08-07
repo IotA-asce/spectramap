@@ -1,0 +1,94 @@
+# A fixed-frequency survey of the 433 MHz ISM band with a real RTL-SDR.
+#
+#     spectramap survey -c examples/433mhz-neighbourhood.yaml -o surveys/433-walk.smap
+#
+# Everything here is recorded into the survey manifest, so the survey can be
+# reproduced later and so a reader knows exactly how the numbers were obtained.
+#
+# Before a real survey, check your local regulations. SpectraMap only receives, but
+# what you may listen to, where you may walk, and what you may do with the results
+# are matters of local law. See docs/safety-and-legal.md.
+
+survey:
+  name: 433mhz-neighbourhood
+  mode: fixed
+  notes: >
+    Evening walk around the block with the beacon running on the balcony.
+    Antenna held vertically at roughly chest height throughout.
+
+receiver:
+  driver: rtl-sdr
+  index: 0
+
+  # FIXED GAIN. This is the single most important setting for a survey whose point
+  # is comparing power between places. Under automatic gain the receiver rescales
+  # itself as you walk, and two locations with identical fields report different
+  # powers. Set `gain: auto` only if you do not care about spatial comparison.
+  #
+  # Pick a value that leaves headroom on the strongest signal you expect: watch for
+  # SDR_OVERLOAD in `spectramap status` and drop the gain if it appears.
+  gain: 28.0
+
+  # Crystal error for this specific dongle, in parts per million. Measure it once
+  # against a known reference; an uncorrected RTL-SDR is commonly 20-60 ppm off,
+  # which at 433 MHz is 9-26 kHz.
+  freq_correction_ppm: 0
+
+antenna:
+  # None of this is verified by SpectraMap. It is recorded because an RF power
+  # number without an antenna description is close to meaningless, and because two
+  # surveys are only comparable if the antenna was the same.
+  id: whip-433-quarter-wave
+  type: quarter-wave whip
+  polarization: vertical
+  gain_dbi: 2.1          # Manufacturer's claim, not measured.
+  frequency_range:
+    min_hz: 420MHz
+    max_hz: 450MHz
+  notes: Magnetic base on a 10 cm ground plane, carried by hand.
+
+capture:
+  # The frequency you care about.
+  center_frequency_hz: 433.92MHz
+
+  # How far the local oscillator is tuned away from it. A zero-IF receiver cannot
+  # measure its own tuned frequency: DC offset and LO self-mixing pile an artefact
+  # into the centre bin, and the DC removal that suppresses that artefact deletes
+  # any real signal sitting there too. Tuning exactly onto a target reliably reports
+  # it as empty. The frequency axis stays absolute, so 433.92 MHz still appears at
+  # 433.92 MHz.
+  offset_tuning_hz: 250kHz
+
+  # 2.4 MS/s is the highest rate most hosts sustain over USB without dropping
+  # samples. Higher rates are accepted by the hardware and then quietly lose data.
+  sample_rate_hz: 2.4MHz
+
+  # Samples per driver read: 262144 at 2.4 MS/s is about 109 ms.
+  block_samples: 262144
+
+fft:
+  size: 4096             # 586 Hz bins at 2.4 MS/s.
+  window: hann           # 1.5 bins ENBW -> 879 Hz true resolution bandwidth.
+  overlap: 0.5
+  normalization: density # dBFS/Hz: comparable across FFT sizes. See docs/dsp-pipeline.md.
+  remove_dc: true
+
+aggregation:
+  # One observation per 500 ms. At walking pace that is 0.65 m of travel, well
+  # inside GPS error, so nothing is lost spatially while averaging several FFTs
+  # reduces the variance of each estimate.
+  interval_ms: 500
+  bin_decimation: 1      # Raise to 2 or 4 to halve or quarter the storage cost.
+
+location:
+  provider: nmea
+  port: /dev/ttyUSB0     # macOS: /dev/tty.usbserial-*  Raspberry Pi: /dev/serial0
+  baudrate: 9600
+  max_age_ms: 5000       # Beyond this, an observation is marked NO_LOCATION.
+  accuracy_limit_m: 15   # Beyond this, it is flagged GPS_LOW_ACCURACY (but kept).
+
+quality:
+  overload_fraction: 0.0001   # Clipped-sample fraction that raises SDR_OVERLOAD.
+  min_free_disk_mb: 500       # Stop cleanly rather than filling the card.
+  max_duration_s: null
+  max_observations: null
