@@ -1,0 +1,54 @@
+# The simulated scenario: the full pipeline with no radio hardware at all.
+#
+#     spectramap survey -c examples/simulated.yaml -o surveys/sim.smap -d 80
+#     spectramap analyze surveys/sim.smap -f 433.92MHz
+#     spectramap serve surveys/sim.smap
+#
+# A synthetic beacon sits at a known virtual coordinate inside a surveyed grid, plus
+# a distant carrier that is clearly detectable but spatially flat -- the control case
+# that a reconstruction must decline to localise.
+
+survey:
+  name: simulated
+  mode: fixed
+  notes: Deterministic simulation. No hardware, no transmission, no network.
+
+receiver:
+  driver: mock
+  gain: 24.0             # Snaps to 22.9 dB, the nearest real R820T step.
+
+antenna:
+  id: sim-whip
+  type: quarter-wave whip
+  polarization: vertical
+
+capture:
+  center_frequency_hz: 433.92MHz
+  # 250 kS/s spans only +/-125 kHz, so the offset must stay well inside that. Asking
+  # for the 250 kHz default here is rejected rather than silently measuring nothing.
+  offset_tuning_hz: 50kHz
+  sample_rate_hz: 250kHz
+  block_samples: 8192
+
+fft:
+  size: 512
+  window: hann
+  overlap: 0.5
+  normalization: density
+  remove_dc: true
+
+aggregation:
+  interval_ms: 500
+
+location:
+  provider: mock
+  update_rate_hz: 1.0
+  max_age_ms: 5000
+  accuracy_limit_m: 15
+
+simulation:
+  seed: 20260807         # Same seed, same samples, same map. Every time.
+  scenario: compact
+  realtime: false        # true makes the demo unfold at human speed.
+  # Simulated GPS outages, to exercise the NO_LOCATION path:
+  # gps_dropout_windows: [[20.0, 35.0]]
