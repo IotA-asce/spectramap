@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from tests.conftest import complex_noise, tone
 
 from spectramap.dsp.detect import band_occupancy, detect_peaks, estimate_noise_floor
 from spectramap.dsp.spectrum import SpectrumAccumulator, SpectrumEstimator, frequency_axis
 from spectramap.dsp.window import get_window, window_stats
 from spectramap.types import FFTConfig, Normalization, PowerUnit
+from tests.conftest import complex_noise, tone
 
 FS = 2_400_000.0
 FC = 433_920_000.0

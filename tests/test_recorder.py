@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from tests.conftest import COMPACT_CONFIG
 
 from spectramap.sdr.mock import MockSDR
 from spectramap.simulation.clock import SimClock
@@ -18,6 +17,7 @@ from spectramap.survey.config import SurveyConfig
 from spectramap.survey.recorder import SurveyRecorder
 from spectramap.survey.session import build_session
 from spectramap.types import QualityFlag
+from tests.conftest import COMPACT_CONFIG
 
 
 def _record(tmp_path, overrides=None, duration=25.0, world=None, device=None, name="t"):

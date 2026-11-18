@@ -7,7 +7,7 @@
 [![CI](https://github.com/IotA-asce/spectramap/actions/workflows/ci.yml/badge.svg)](https://github.com/IotA-asce/spectramap/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12%20|%203.13-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-227%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-231%20passing-brightgreen.svg)](tests/)
 [![Hardware](https://img.shields.io/badge/CI-no%20RF%20hardware%20required-informational.svg)](#try-it-in-sixty-seconds)
 
 <img src="docs/images/heatmap.png" alt="An RF heatmap reconstructed from a simulated survey. Brightness is received power at 433.92 MHz; the pale dots are individual measurements along the walked route; the white circle is the estimated strongest-signal region with its uncertainty radius; the red cross is the true transmitter, which the mapping code was never given." width="520">

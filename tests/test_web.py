@@ -12,9 +12,9 @@ import urllib.error
 import urllib.request
 
 import pytest
-from tests.conftest import BEACON_HZ, CONTROL_HZ
 
 from spectramap.web.server import Handler, SurveyService, _Server
+from tests.conftest import BEACON_HZ, CONTROL_HZ
 
 
 @pytest.fixture(scope="module")

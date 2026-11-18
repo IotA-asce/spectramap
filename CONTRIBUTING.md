@@ -10,7 +10,7 @@ git clone <repo> && cd spectramap
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 
-pytest          # 227 tests, no radio hardware needed
+pytest          # 231 tests, no radio hardware needed
 ruff check .
 python examples/simulated_survey.py
 ```
@@ -21,6 +21,8 @@ that test is in the wrong place.
 Keep `tests/__init__.py`: tests share helpers through `tests.conftest`. The package
 marker makes those imports work with the `pytest` console command used by CI as
 well as `python -m pytest`; the latter alone can hide a missing package marker.
+After changing package layout, use `ruff check --no-cache .` so a cached import
+classification cannot conceal sorting changes.
 See [pytest's import-path explanation](https://docs.pytest.org/en/stable/explanation/pythonpath.html).
 
 ## Engineering priorities

@@ -21,13 +21,13 @@ import json
 
 import numpy as np
 import pytest
-from tests.conftest import BEACON_HZ, CONTROL_HZ
 
 from spectramap.analysis.pipeline import BandSelection, reconstruct, write_products
 from spectramap.analysis.summary import summarise
 from spectramap.geospatial.projection import haversine_m
 from spectramap.storage import SurveyReader
 from spectramap.types import Evidence, PowerUnit
+from tests.conftest import BEACON_HZ, CONTROL_HZ
 
 
 @pytest.fixture(scope="module")
