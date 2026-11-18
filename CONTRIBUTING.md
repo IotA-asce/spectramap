@@ -18,6 +18,11 @@ python examples/simulated_survey.py
 The entire pipeline runs against the simulator. If you need hardware to run a test,
 that test is in the wrong place.
 
+Keep `tests/__init__.py`: tests share helpers through `tests.conftest`. The package
+marker makes those imports work with the `pytest` console command used by CI as
+well as `python -m pytest`; the latter alone can hide a missing package marker.
+See [pytest's import-path explanation](https://docs.pytest.org/en/stable/explanation/pythonpath.html).
+
 ## Engineering priorities
 
 In order. When two conflict, the higher one wins.
