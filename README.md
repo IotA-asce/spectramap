@@ -107,6 +107,11 @@ Strongest-signal region  [ESTIMATED]
 intensity layer with a frequency selector, and a spectrum viewer for any point you
 click.
 
+For scripts, `spectramap gps --provider mock --json` writes only a JSON array of
+fixes to stdout on success. Errors use stderr and a nonzero exit code (2 when no
+fix arrives); check the exit code before parsing. Omit `--json` for the human-readable
+position summary and progress messages.
+
 Or run the whole slice as one script:
 
 ```bash

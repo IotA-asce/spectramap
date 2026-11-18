@@ -189,16 +189,18 @@ def cmd_gps(args: argparse.Namespace) -> int:
         clock = SimClock()
         provider = MockPositionProvider(default_world(), clock)
 
-    print(heading("Position source"))
-    for key, value in provider.describe().items():
-        print(field(str(key), value, 26))
+    if not args.json:
+        print(heading("Position source"))
+        for key, value in provider.describe().items():
+            print(field(str(key), value, 26))
 
     try:
         provider.start()
     except Exception as exc:
         return fail(str(exc))
 
-    print(dim(f"\n  waiting up to {args.timeout:.0f} s for a fix..."))
+    if not args.json:
+        print(dim(f"\n  waiting up to {args.timeout:.0f} s for a fix..."))
     deadline = time.monotonic() + args.timeout
     fixes: list[Any] = []
     while time.monotonic() < deadline and len(fixes) < args.count:
@@ -210,6 +212,11 @@ def cmd_gps(args: argparse.Namespace) -> int:
     provider.stop()
 
     if not fixes:
+        if args.json:
+            return fail(
+                "No fix. Check the antenna sky view, port, baud rate and acquisition timeout.",
+                code=2,
+            )
         print(red("\n  No fix. "), end="")
         print("Check the antenna has sky view, the port and baud rate are right,")
         print("  and that the receiver has had time to acquire (a cold start can take minutes).")

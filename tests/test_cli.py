@@ -39,6 +39,37 @@ def test_gps_reports_a_simulated_fix(capsys):
     assert "Accuracy" in out
 
 
+@pytest.mark.parametrize(
+    "arguments, source",
+    [
+        (("--provider", "mock"), "mock"),
+        (("--provider", "static", "--latitude", "12.5", "--longitude", "-25"), "static"),
+    ],
+)
+def test_gps_json_is_machine_readable(capsys, arguments, source):
+    code, out, err = run(capsys, "gps", *arguments, "--json")
+    assert code == 0
+    fixes = json.loads(out)
+    assert len(fixes) == 1
+    assert fixes[0]["source"] == source
+    assert "Position source" not in out
+    assert not err
+
+
+def test_gps_json_no_fix_reports_only_to_stderr(capsys):
+    code, out, err = run(capsys, "gps", "--provider", "mock", "--timeout", "0", "--json")
+    assert code == 2
+    assert not out
+    assert "No fix" in err
+
+
+def test_gps_json_invalid_provider_configuration_keeps_stdout_empty(capsys):
+    code, out, err = run(capsys, "gps", "--provider", "nmea", "--json")
+    assert code == 1
+    assert not out
+    assert "--port is required" in err
+
+
 def test_gps_nmea_without_a_port_fails_clearly(capsys):
     code, _, err = run(capsys, "gps", "--provider", "nmea")
     assert code == 1
